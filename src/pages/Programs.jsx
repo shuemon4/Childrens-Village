@@ -29,9 +29,9 @@ const ProgramCard = ({ title, ageRange, description, pricing, ratio, classSize, 
           className="w-full h-full object-cover object-center"
         />
       </div>
-      <div className="p-6">
-        <div className="flex justify-between items-start mb-4">
-          <h3 className="text-xl font-heading font-bold">{title}</h3>
+      <div className="p-4 md:p-6">
+        <div className="flex flex-wrap justify-between items-start mb-4">
+          <h3 className="text-lg md:text-xl font-heading font-bold mr-2">{title}</h3>
           {isFull && (
             <span className="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">
               Full
@@ -39,9 +39,9 @@ const ProgramCard = ({ title, ageRange, description, pricing, ratio, classSize, 
           )}
         </div>
         <p className="text-primary font-medium mb-4">{ageRange}</p>
-        <p className="text-gray-600 mb-4">{description}</p>
+        <p className="text-gray-600 mb-4 text-sm md:text-base">{description}</p>
         
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <div>
             <h4 className="font-heading font-bold text-sm mb-1">Teacher-Child Ratio</h4>
             <p className="text-gray-600">{ratio}</p>

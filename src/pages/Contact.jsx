@@ -119,12 +119,12 @@ const Contact = () => {
             </div>
             
             {/* Map & Contact Info */}
-            <div className="lg:w-1/2">
-              <h2 className="text-3xl font-heading font-bold mb-6">Visit Us</h2>
+            <div className="w-full lg:w-1/2 mt-8 lg:mt-0">
+              <h2 className="text-2xl md:text-3xl font-heading font-bold mb-6">Visit Us</h2>
               
               {/* Map Placeholder - In a real application, you would integrate Google Maps here */}
-              <div className="bg-gray-300 h-64 mb-8 rounded-lg flex items-center justify-center">
-                <p className="text-gray-600">Map Placeholder - 10026 W 88th St, Overland Park, KS, 66212</p>
+              <div className="bg-gray-300 h-48 md:h-64 mb-8 rounded-lg flex items-center justify-center p-4 text-center">
+                <p className="text-gray-600 text-sm md:text-base">Map Placeholder - 10026 W 88th St, Overland Park, KS, 66212</p>
               </div>
               
               <div className="space-y-6">
