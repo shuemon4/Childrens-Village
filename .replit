@@ -11,3 +11,19 @@ publicDir = "dist"
 [[deployment.rewrites]]
 from = "/*"
 to = "/index.html"
+
+[workflows]
+runButton = "Run"
+
+[[workflows.workflow]]
+name = "Run"
+author = 40261509
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
