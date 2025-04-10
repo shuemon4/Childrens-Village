@@ -1,6 +1,8 @@
 
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { login } from '../api';
+import { auth } from '../firebase/config';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 
 const AuthContext = createContext();
 
@@ -17,19 +19,43 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Initialize auth state from localStorage
+  // Listen for Firebase auth state changes
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch (err) {
-        console.error('Error parsing stored user:', err);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Get the user's custom claims and additional info from localStorage or Firestore
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          try {
+            const userData = JSON.parse(storedUser);
+            setUser({
+              id: firebaseUser.uid,
+              email: firebaseUser.email,
+              ...userData
+            });
+          } catch (err) {
+            console.error('Error parsing stored user:', err);
+            // Fallback to basic user info
+            setUser({
+              id: firebaseUser.uid,
+              email: firebaseUser.email
+            });
+          }
+        } else {
+          // Fallback to basic user info
+          setUser({
+            id: firebaseUser.uid,
+            email: firebaseUser.email
+          });
+        }
+      } else {
+        setUser(null);
         localStorage.removeItem('user');
-        localStorage.removeItem('token');
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const loginUser = async (credentials) => {
@@ -38,20 +64,24 @@ export const AuthProvider = ({ children }) => {
       const response = await login(credentials);
       const { token, user } = response.data;
       
-      localStorage.setItem('token', token);
+      // Store additional user data
       localStorage.setItem('user', JSON.stringify(user));
-      setUser(user);
+      
       return user;
     } catch (err) {
-      setError(err.response?.data?.msg || 'Login failed');
+      setError(err.message || 'Login failed');
       throw err;
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setUser(null);
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      localStorage.removeItem('user');
+      setUser(null);
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
   };
 
   const isAdmin = () => {

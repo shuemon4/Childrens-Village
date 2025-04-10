@@ -1,9 +1,11 @@
 
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 require('dotenv').config();
 
 const app = express();
@@ -13,37 +15,25 @@ const PORT = process.env.PORT || 5001;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://your-mongodb-connection-string')
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Initialize Firebase Admin
+const serviceAccount = JSON.parse(
+  Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf-8')
+);
 
-// Models
-const User = mongoose.model('User', new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  isAdmin: { type: Boolean, default: false }
-}));
+const firebaseAdmin = initializeApp({
+  credential: cert(serviceAccount)
+});
 
-const News = mongoose.model('News', new mongoose.Schema({
-  title: { type: String, required: true },
-  content: { type: String, required: true },
-  type: { type: String, default: 'standard' },
-  expiration: { type: Date },
-  createdAt: { type: Date, default: Date.now }
-}));
+const db = getFirestore();
+const auth = getAuth();
 
-const Event = mongoose.model('Event', new mongoose.Schema({
-  title: { type: String, required: true },
-  description: { type: String },
-  startDate: { type: Date, required: true },
-  endDate: { type: Date, required: true },
-  allDay: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now }
-}));
+// Collections
+const usersCollection = db.collection('users');
+const newsCollection = db.collection('news');
+const eventsCollection = db.collection('events');
 
 // Auth middleware
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   const token = req.header('x-auth-token');
   if (!token) return res.status(401).json({ msg: 'No token, authorization denied' });
 
@@ -67,19 +57,32 @@ app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   
   try {
-    const user = await User.findOne({ username });
-    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
+    const userQuery = await usersCollection.where('username', '==', username).limit(1).get();
     
-    const isMatch = await bcrypt.compare(password, user.password);
+    if (userQuery.empty) {
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
+    
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+    
+    const isMatch = await bcrypt.compare(password, userData.password);
     if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
     
     const token = jwt.sign(
-      { id: user.id, isAdmin: user.isAdmin },
+      { id: userDoc.id, isAdmin: userData.isAdmin },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
     
-    res.json({ token, user: { id: user.id, username: user.username, isAdmin: user.isAdmin } });
+    res.json({ 
+      token, 
+      user: { 
+        id: userDoc.id, 
+        username: userData.username, 
+        isAdmin: userData.isAdmin 
+      } 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server error');
@@ -89,12 +92,23 @@ app.post('/api/login', async (req, res) => {
 // News routes
 app.get('/api/news', async (req, res) => {
   try {
-    const news = await News.find({ 
-      $or: [
-        { expiration: { $gt: new Date() } },
-        { expiration: null }
-      ]
-    }).sort({ createdAt: -1 });
+    const now = new Date();
+    const newsSnapshot = await newsCollection
+      .where('expiration', '>', now)
+      .orderBy('expiration', 'asc')
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    const news = [];
+    newsSnapshot.forEach(doc => {
+      news.push({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt.toDate(),
+        expiration: doc.data().expiration?.toDate() || null
+      });
+    });
+    
     res.json(news);
   } catch (err) {
     console.error(err);
@@ -106,15 +120,22 @@ app.post('/api/news', [authMiddleware, adminMiddleware], async (req, res) => {
   const { title, content, type, expiration } = req.body;
   
   try {
-    const news = new News({
+    const newsRef = await newsCollection.add({
       title,
       content,
       type,
-      expiration: expiration || null
+      expiration: expiration ? new Date(expiration) : null,
+      createdAt: new Date()
     });
     
-    const savedNews = await news.save();
-    res.json(savedNews);
+    const newsDoc = await newsRef.get();
+    
+    res.json({
+      id: newsDoc.id,
+      ...newsDoc.data(),
+      createdAt: newsDoc.data().createdAt.toDate(),
+      expiration: newsDoc.data().expiration?.toDate() || null
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server error');
@@ -123,7 +144,7 @@ app.post('/api/news', [authMiddleware, adminMiddleware], async (req, res) => {
 
 app.delete('/api/news/:id', [authMiddleware, adminMiddleware], async (req, res) => {
   try {
-    await News.findByIdAndDelete(req.params.id);
+    await newsCollection.doc(req.params.id).delete();
     res.json({ msg: 'News removed' });
   } catch (err) {
     console.error(err);
@@ -134,7 +155,21 @@ app.delete('/api/news/:id', [authMiddleware, adminMiddleware], async (req, res) 
 // Calendar routes
 app.get('/api/events', async (req, res) => {
   try {
-    const events = await Event.find().sort({ startDate: 1 });
+    const eventsSnapshot = await eventsCollection
+      .orderBy('startDate', 'asc')
+      .get();
+    
+    const events = [];
+    eventsSnapshot.forEach(doc => {
+      events.push({
+        id: doc.id,
+        ...doc.data(),
+        startDate: doc.data().startDate.toDate(),
+        endDate: doc.data().endDate.toDate(),
+        createdAt: doc.data().createdAt.toDate()
+      });
+    });
+    
     res.json(events);
   } catch (err) {
     console.error(err);
@@ -146,16 +181,24 @@ app.post('/api/events', [authMiddleware, adminMiddleware], async (req, res) => {
   const { title, description, startDate, endDate, allDay } = req.body;
   
   try {
-    const event = new Event({
+    const eventRef = await eventsCollection.add({
       title,
       description,
-      startDate,
-      endDate,
-      allDay
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      allDay,
+      createdAt: new Date()
     });
     
-    const savedEvent = await event.save();
-    res.json(savedEvent);
+    const eventDoc = await eventRef.get();
+    
+    res.json({
+      id: eventDoc.id,
+      ...eventDoc.data(),
+      startDate: eventDoc.data().startDate.toDate(),
+      endDate: eventDoc.data().endDate.toDate(),
+      createdAt: eventDoc.data().createdAt.toDate()
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server error');
@@ -164,8 +207,28 @@ app.post('/api/events', [authMiddleware, adminMiddleware], async (req, res) => {
 
 app.put('/api/events/:id', [authMiddleware, adminMiddleware], async (req, res) => {
   try {
-    const event = await Event.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(event);
+    const eventRef = eventsCollection.doc(req.params.id);
+    
+    // Format dates if they exist in the request
+    if (req.body.startDate) {
+      req.body.startDate = new Date(req.body.startDate);
+    }
+    if (req.body.endDate) {
+      req.body.endDate = new Date(req.body.endDate);
+    }
+    
+    await eventRef.update(req.body);
+    
+    const updatedDoc = await eventRef.get();
+    const eventData = updatedDoc.data();
+    
+    res.json({
+      id: updatedDoc.id,
+      ...eventData,
+      startDate: eventData.startDate.toDate(),
+      endDate: eventData.endDate.toDate(),
+      createdAt: eventData.createdAt.toDate()
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server error');
@@ -174,7 +237,7 @@ app.put('/api/events/:id', [authMiddleware, adminMiddleware], async (req, res) =
 
 app.delete('/api/events/:id', [authMiddleware, adminMiddleware], async (req, res) => {
   try {
-    await Event.findByIdAndDelete(req.params.id);
+    await eventsCollection.doc(req.params.id).delete();
     res.json({ msg: 'Event removed' });
   } catch (err) {
     console.error(err);
@@ -192,19 +255,21 @@ app.post('/api/setup', async (req, res) => {
   }
   
   try {
-    let user = await User.findOne({ username });
-    if (user) return res.status(400).json({ msg: 'User already exists' });
+    const userQuery = await usersCollection.where('username', '==', username).limit(1).get();
+    if (!userQuery.empty) {
+      return res.status(400).json({ msg: 'User already exists' });
+    }
     
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
-    user = new User({
+    await usersCollection.add({
       username,
       password: hashedPassword,
-      isAdmin: true
+      isAdmin: true,
+      createdAt: new Date()
     });
     
-    await user.save();
     res.json({ msg: 'Admin user created successfully' });
   } catch (err) {
     console.error(err);
