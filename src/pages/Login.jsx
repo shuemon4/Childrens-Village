@@ -22,12 +22,20 @@ const Login = () => {
     setResetEmail(e.target.value);
   };
   
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // In a real application, you would send the login credentials to a server for authentication
-    console.log('Login attempt:', formData);
-    // For demo purposes, we'll just redirect to a mock dashboard
-    window.location.href = '/';
+    try {
+      // Import auth functions only when needed to avoid "process is not defined" errors
+      const { signInWithEmailAndPassword } = await import('firebase/auth');
+      const { auth } = await import('../firebase/config');
+      
+      await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      // After successful login, redirect to home
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Login error:', error);
+      alert('Login failed: ' + (error.message || 'Please check your credentials'));
+    }
   };
   
   const handleForgotPassword = (e) => {
